@@ -12,7 +12,7 @@ export default function Chat() {
 
   useEffect(() => {
     if (sessionId) {
-      fetch(`/pages/api/chat/history?sessionId=${sessionId}`)
+      fetch(`/api/chat/history?sessionId=${sessionId}`)
         .then((r) => r.json())
         .then((data) => setMessages(data));
     }
@@ -29,7 +29,7 @@ export default function Chat() {
     setMessages(temp);
     setLoading(true);
 
-    const res = await fetch("/pages/api/chat/message", {
+    const res = await fetch("/api/chat/message", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: input, sessionId }),
