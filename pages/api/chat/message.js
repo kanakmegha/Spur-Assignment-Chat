@@ -1,4 +1,5 @@
-import { supabase } from "../../../supabase"; // Adjust path based on your folder structure
+// This works no matter how many folders deep you are
+import { supabase } from "@/supabase"; // Adjust path based on your folder structure
 import OpenAI from "openai";
 
 // Initialize the Groq client using the OpenAI SDK
