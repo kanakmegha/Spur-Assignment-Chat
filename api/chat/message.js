@@ -1,76 +1,57 @@
-import { supabase } from "../supabase";
+import { supabase } from "../../../supabase"; // Adjust path based on your folder structure
 import OpenAI from "openai";
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+// Initialize the Groq client using the OpenAI SDK
+const groq = new OpenAI({
+  apiKey: process.env.GROQ_API_KEY,
+  baseURL: "https://api.groq.com/openai/v1",
 });
 
 export default async function handler(req, res) {
-  // 1. Method check
+  // 1. Only allow POST requests
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method Not Allowed" });
   }
 
-  // 2. Global Try-Catch to prevent the "A server error..." plain text crash
   try {
     const { message, sessionId } = req.body;
 
-    if (!message || !message.trim()) {
-      return res.status(400).json({ error: "Message cannot be empty" });
-    }
-
-    // Check if API Key exists before calling OpenAI
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error("OPENAI_API_KEY is missing in environment variables");
+    if (!message?.trim()) {
+      return res.status(400).json({ error: "Message is required" });
     }
 
     let sid = sessionId;
 
-    // Create new conversation if needed
+    // 2. Database: Handle Session (Supabase)
     if (!sid) {
-      const { data, error: createError } = await supabase
+      const { data, error: sessionError } = await supabase
         .from("conversations")
         .insert({})
         .select("id")
         .single();
-
-      if (createError) {
-        console.error("Supabase Session Error:", createError);
-        return res.status(500).json({ error: "Failed creating session" });
-      }
+      
+      if (sessionError) throw new Error("Supabase: Failed to create session");
       sid = data.id;
     }
 
-    // Save user message
-    const { error: userMsgError } = await supabase.from("messages").insert({
+    // 3. Database: Save User Message
+    await supabase.from("messages").insert({
       conversation_id: sid,
       sender: "user",
       text: message
     });
-    
-    if (userMsgError) throw new Error("Failed to save user message");
 
-    // Fetch previous messages
-    const { data: history, error: historyError } = await supabase
+    // 4. Database: Fetch Context (Last 6 messages)
+    const { data: history } = await supabase
       .from("messages")
       .select("sender,text")
       .eq("conversation_id", sid)
-      .order("created_at", { ascending: true }) // Using created_at is safer than id
-      .limit(10);
+      .order("id", { ascending: true })
+      .limit(6);
 
-    if (historyError) throw new Error("Failed to fetch history");
-
-    const SYSTEM = `
-You are a helpful support agent for a fictional e-commerce store.
-Store Knowledge:
-- Shipping worldwide: 5–7 business days
-- Returns: 30-day, no questions asked
-- Support hours: 9am–6pm IST
-`;
-
-    // Map history to OpenAI format
-    const llmMessages = [
-      { role: "system", content: SYSTEM },
+    // 5. Format for Groq
+    const messages = [
+      { role: "system", content: "You are a helpful e-commerce support assistant." },
       ...(history || []).map((h) => ({
         role: h.sender === "user" ? "user" : "assistant",
         content: h.text
@@ -78,38 +59,29 @@ Store Knowledge:
       { role: "user", content: message }
     ];
 
-    // Call OpenAI
-    let reply;
-    try {
-      const completion = await client.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: llmMessages,
-        max_tokens: 150
-      });
-      reply = completion.choices[0].message.content;
-    } catch (llmErr) {
-      console.error("OpenAI API Error:", llmErr);
-      return res.status(502).json({ error: "AI service is temporarily unavailable" });
-    }
+    // 6. Call Groq
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile", // This is the best free model on Groq right now
+      messages: messages,
+      max_tokens: 500,
+      temperature: 0.7
+    });
 
-    // Save AI reply
-    const { error: aiMsgError } = await supabase.from("messages").insert({
+    const reply = completion.choices[0].message.content;
+
+    // 7. Database: Save AI Reply
+    await supabase.from("messages").insert({
       conversation_id: sid,
-      sender: "assistant", // Changed from "ai" to match roles
+      sender: "assistant",
       text: reply
     });
 
-    if (aiMsgError) console.error("Error saving AI reply:", aiMsgError);
-
-    // Final successful JSON response
+    // 8. Return Success JSON
     return res.status(200).json({ reply, sessionId: sid });
 
-  } catch (globalError) {
-    console.error("Critical Backend Error:", globalError.message);
-    // This ensures we ALWAYS return JSON, even on a total crash
-    return res.status(500).json({ 
-      error: "Internal Server Error", 
-      details: globalError.message 
-    });
+  } catch (error) {
+    console.error("Internal Error:", error.message);
+    // This JSON response prevents the "Unexpected token A" error on frontend
+    return res.status(500).json({ error: error.message || "Internal Server Error" });
   }
 }
