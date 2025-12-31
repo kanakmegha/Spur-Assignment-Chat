@@ -8,7 +8,7 @@ export default function Home() {
   const sendMessage = async (e) => {
     e.preventDefault();
     try {
-      const res = await fetch("/api/chat/message", {
+      const res = await fetch("/pages/api/chat/message", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: input, sessionId: sid }),
